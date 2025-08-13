@@ -7,6 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..schemas import Note, NoteCreate, Block
 from ..db import get_session
 from ..auth import get_current_user, CurrentUser
+from ..utils.indexing import update_note_search
+from ..utils.links import rebuild_links_for_note
 
 router = APIRouter()
 
@@ -52,8 +54,8 @@ async def create_note(
 ):
     q = text(
         """
-        INSERT INTO notes (user_id, title, folder_id)
-        VALUES (:uid::uuid, :title, :folder_id)
+        INSERT INTO notes (user_id, title, folder_id, excerpt)
+        VALUES (:uid::uuid, :title, :folder_id, :excerpt)
         RETURNING id, title, excerpt, folder_id, created_at, updated_at
         """
     )
@@ -63,11 +65,15 @@ async def create_note(
             "uid": user.id,
             "title": payload.title,
             "folder_id": str(payload.folderId) if payload.folderId else None,
+            "excerpt": payload.excerpt or (payload.body[:200] if payload.body else None),
         },
     )
     row = res.fetchone()
     if row is None:
         raise HTTPException(status_code=500, detail="Demo user not found; run seed")
+    # Update search and links
+    await update_note_search(session, str(row.id), row.title, row.excerpt, payload.body)
+    await rebuild_links_for_note(session, user.id, str(row.id), payload.body)
     await session.commit()
     return Note(
         id=row.id,
@@ -77,6 +83,7 @@ async def create_note(
         createdAt=row.created_at,
         updatedAt=row.updated_at,
         blocks=[],
+        body=None,
     )
 
 
@@ -88,7 +95,7 @@ async def get_note(
 ):
     q = text(
         """
-        SELECT n.id, n.title, n.excerpt, n.folder_id, n.created_at, n.updated_at
+        SELECT n.id, n.title, n.excerpt, n.folder_id, n.created_at, n.updated_at, n.plain_text
         FROM notes n
         WHERE n.user_id = :uid::uuid AND n.id::text = :id
         """
@@ -105,6 +112,7 @@ async def get_note(
         createdAt=row.created_at,
         updatedAt=row.updated_at,
         blocks=[],
+        body=row.plain_text,
     )
 
 
@@ -117,7 +125,7 @@ async def update_note(
 ):
     if not payload:
         raise HTTPException(status_code=400, detail="No fields to update")
-    allowed = {k: v for k, v in payload.items() if k in {"title", "excerpt", "folderId"}}
+    allowed = {k: v for k, v in payload.items() if k in {"title", "excerpt", "folderId", "body"}}
     if not allowed:
         return {"id": note_id, "updated": {}}
     q = text(
@@ -145,6 +153,16 @@ async def update_note(
     await session.commit()
     if row is None:
         raise HTTPException(status_code=404, detail="Note not found")
+    # Update search and links if body/title/excerpt changed
+    await update_note_search(
+        session,
+        note_id,
+        allowed.get("title", row.title),
+        allowed.get("excerpt", row.excerpt),
+        allowed.get("body"),
+    )
+    await rebuild_links_for_note(session, user.id, note_id, allowed.get("body"))
+    await session.commit()
     return {
         "id": str(row.id),
         "title": row.title,
@@ -165,3 +183,25 @@ async def delete_note(
     await session.execute(q, {"id": note_id, "uid": user.id})
     await session.commit()
     return {"id": note_id, "deleted": True}
+
+
+@router.get("/{note_id}/backlinks")
+async def backlinks(
+    note_id: str,
+    session: AsyncSession = Depends(get_session),
+    user: CurrentUser = Depends(get_current_user),
+):
+    q = text(
+        """
+        SELECT n.id::text AS id, n.title, count(l.id) AS refs
+        FROM links l
+        JOIN notes n ON n.id = l.src_note_id
+        WHERE l.dst_note_id::text = :id AND n.user_id = :uid::uuid AND n.deleted_at IS NULL
+        GROUP BY n.id, n.title
+        ORDER BY refs DESC, n.updated_at DESC
+        LIMIT 100
+        """
+    )
+    res = await session.execute(q, {"id": note_id, "uid": user.id})
+    rows = res.mappings().all()
+    return [{"id": r["id"], "title": r["title"], "count": int(r["refs"])} for r in rows]

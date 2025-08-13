@@ -9,6 +9,8 @@ class NoteCreate(BaseModel):
     folderId: Optional[UUID] = None
     tags: List[str] = Field(default_factory=list)
     properties: dict = Field(default_factory=dict)
+    body: Optional[str] = None
+    excerpt: Optional[str] = None
 
 
 class Block(BaseModel):
@@ -27,6 +29,7 @@ class Note(BaseModel):
     createdAt: datetime
     updatedAt: datetime
     blocks: List[Block] = Field(default_factory=list)
+    body: Optional[str] = None
 
 
 class AuthCredentials(BaseModel):
@@ -44,3 +47,32 @@ class Tag(BaseModel):
     name: str
     color: Optional[str] = None
 
+
+class TagCreate(BaseModel):
+    name: str
+    color: Optional[str] = None
+
+
+class TagUpdate(BaseModel):
+    name: Optional[str] = None
+    color: Optional[str] = None
+
+
+class TagOut(Tag):
+    count: int = 0
+
+
+class Folder(BaseModel):
+    id: UUID
+    name: str
+    parentId: Optional[UUID] = None
+
+
+class FolderCreate(BaseModel):
+    name: str
+    parentId: Optional[UUID] = None
+
+
+class FolderUpdate(BaseModel):
+    name: Optional[str] = None
+    parentId: Optional[UUID] = None
