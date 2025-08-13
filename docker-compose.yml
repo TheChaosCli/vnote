@@ -1,0 +1,40 @@
+version: "3.9"
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: vnote
+      POSTGRES_PASSWORD: vnote
+      POSTGRES_DB: vnote
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  migrate:
+    image: postgres:16
+    depends_on:
+      - db
+    environment:
+      PGPASSWORD: vnote
+    volumes:
+      - ./db/migrations:/migrations:ro
+      - ./db/seed:/seed:ro
+    entrypoint: ["bash","-lc","until pg_isready -h db -p 5432 -U vnote; do sleep 1; done; for f in /migrations/*.sql; do echo Running $f; psql -h db -U vnote -d vnote -f \"$f\"; done; psql -h db -U vnote -d vnote -f /seed/seed.sql"]
+
+  server:
+    build: ./server
+    depends_on:
+      - db
+      - migrate
+    environment:
+      - DB_URL=postgres://vnote:vnote@db:5432/vnote
+      - SECRET_KEY=change-me
+    volumes:
+      - ./server:/app
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    ports:
+      - "8000:8000"
+
+volumes:
+  pgdata:

@@ -1,0 +1,15 @@
+{
+  "items": [
+    {
+      "content_type": "Note",
+      "created_at": "2021-01-01T12:00:00Z",
+      "updated_at": "2021-01-01T12:30:00Z",
+      "content": {
+        "title": "SN Sample",
+        "text": "Body text",
+        "references": []
+      },
+      "uuid": "11111111-1111-1111-1111-111111111111"
+    }
+  ]
+}
